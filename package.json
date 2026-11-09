@@ -1,0 +1,6 @@
+{
+  "name": "gemini-claude-connector",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@netlify/blobs": "^8.2.0" }
+}

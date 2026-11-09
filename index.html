@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gemini – Claude Connector</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:light dark;--bg:#eef2f6;--card:#fff;--ink:#1d2a44;--mu:#5d6b82;--ln:#c9d2dc;--gem:#4a6cf7;--amb:#b87d0a;--ok:#1f8a5b;--err:#c0392b;--out:#f6f8fb}
+@media(prefers-color-scheme:dark){:root{--bg:#141a28;--card:#1c2436;--ink:#e8edf6;--mu:#9aa7bd;--ln:#2e3a52;--gem:#7f98ff;--amb:#e3b04b;--ok:#4fcf9a;--err:#ff7b6b;--out:#161d2d}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:max(18px,env(safe-area-inset-top)) 16px 60px}
+h1{font:800 28px/1.1 "Bricolage Grotesque",system-ui,sans-serif;margin:6px 0 4px;letter-spacing:-.02em}
+.sub{color:var(--mu);margin:0 0 18px}
+.bridge{position:relative;display:flex;justify-content:space-between;margin:6px 4px 4px}
+.bridge:before,.bridge:after{content:"";position:absolute;left:7px;top:7px;height:3px;border-radius:2px;background:var(--ln);right:7px}
+.bridge:after{background:var(--gem);right:auto;width:calc((100% - 14px)*var(--p,0));transition:width .5s}
+.stop{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;color:var(--mu)}
+.stop i{width:17px;height:17px;border-radius:50%;background:var(--bg);border:3px solid var(--ln)}
+.stop.on i{border-color:var(--gem);background:var(--gem)}.stop.on{color:var(--ink)}
+#status{min-height:24px;margin:10px 0 14px;font-size:14px;color:var(--mu)}#status.err{color:var(--err)}#status.ok{color:var(--ok)}
+section,details{background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-bottom:12px}
+summary{cursor:pointer;font-weight:600}
+label{display:block;font-size:13px;color:var(--mu);margin:12px 0 4px}
+input,select,textarea,button{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--ln);border-radius:8px;padding:10px;width:100%}
+textarea{min-height:70px;resize:vertical}
+.row{display:flex;gap:10px}.row>*{flex:1}
+button{cursor:pointer;width:auto}button.go{width:100%;background:var(--gem);color:#fff;border-color:var(--gem);font-weight:600;padding:13px;margin-top:4px}
+button.go:disabled{opacity:.55}.tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+:focus-visible{outline:3px solid var(--amb);outline-offset:2px}
+#out{white-space:pre-wrap;word-break:break-word;font:13px/1.55 "IBM Plex Mono",ui-monospace,monospace;background:var(--out);border:1px solid var(--ln);border-radius:8px;padding:12px;max-height:60vh;overflow:auto;margin:0}
+.hint{font-size:13px;color:var(--mu);margin:8px 0 0}.hist button{display:block;width:100%;text-align:left;margin-top:6px;font-size:14px}
+</style></head><body><main>
+<h1>Gemini – Claude Connector</h1>
+<p class="sub">Gemini watches and listens to your video. You pass the breakdown to Claude.</p>
+<div class="bridge" id="bridge"><div class="stop on"><i></i>Video</div><div class="stop"><i></i>Upload</div><div class="stop"><i></i>Gemini reads</div><div class="stop"><i></i>Ready for Claude</div></div>
+<div id="status" role="status">Add your Gemini API key to start.</div>
+
+<details id="setup"><summary>API key and model</summary>
+<label for="key">Gemini API key (stays on this device only)</label><input id="key" type="password" autocomplete="off" placeholder="Paste key from Google AI Studio">
+<label for="model">Model</label><input id="model" list="models" value="gemini-3.8-flash"><datalist id="models"><option value="gemini-3.8-flash"><option value="gemini-3.7-flash"><option value="gemini-3.1-pro-preview"><option value="gemini-2.5-pro"></datalist>
+<label for="secret">Inbox secret (same value as INBOX_SECRET in Netlify)</label><input id="secret" type="password" autocomplete="off" placeholder="Optional: sends results to Claude’s inbox">
+<div class="tools"><button id="save">Save key and model</button><button id="forget">Remove key</button></div>
+<p class="hint">If a model name stops working, copy a current one from ai.google.dev and paste it above.</p></details>
+
+<section><label for="file" style="margin-top:0">Video from your phone</label><input id="file" type="file" accept="video/*">
+<label for="yt">Or a public YouTube link</label><input id="yt" type="url" placeholder="https://youtube.com/watch?v=…">
+<div class="row"><div><label for="from">Clip start (optional)</label><input id="from" placeholder="0:00"></div><div><label for="to">Clip end (optional)</label><input id="to" placeholder="0:30"></div></div></section>
+
+<section><label for="focus" style="margin-top:0">What should Gemini extract?</label>
+<select id="focus"><option value="full">Full editing breakdown</option><option value="camera">Camera and motion only</option><option value="text">On-screen text and fonts</option><option value="audio">Audio, music and beat sync</option><option value="custom">Only my instructions</option></select>
+<div class="row"><div><label for="fps">Frames per second</label><select id="fps"><option>1</option><option selected>2</option><option>4</option><option>8</option></select></div><div><label for="fmt">Format</label><select id="fmt"><option value="md">Markdown</option><option value="json">JSON</option></select></div></div>
+<label for="extra">Extra instructions</label><textarea id="extra" placeholder="e.g. Focus on the transition at 0:04 and the handwriting animation."></textarea>
+<button class="go" id="run">Analyze video</button></section>
+
+<section id="res" hidden><div class="tools"><button id="snd">Send to Claude inbox</button><button id="copy">Copy for Claude</button><button id="share">Share</button><button id="dl">Save file</button></div><pre id="out"></pre>
+<p class="hint">Paste the copied text into your chat with Claude, along with the video if you like.</p></section>
+<details class="hist"><summary>Earlier analyses</summary><div id="hist"><p class="hint">Nothing saved yet.</p></div></details>
+</main>
+<script>
+const $=s=>document.querySelector(s),API='https://generativelanguage.googleapis.com';
+const LS={get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v)}catch{return d}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},del:k=>{try{localStorage.removeItem(k)}catch{}}};
+let last=null;
+function step(n,msg,cls){document.querySelectorAll('.stop').forEach((e,i)=>e.classList.toggle('on',i<=n));$('#bridge').style.setProperty('--p',n/3);$('#status').textContent=msg;$('#status').className=cls||''}
+$('#key').value=LS.get('gcc_key','');$('#model').value=LS.get('gcc_model','gemini-3.8-flash');$('#secret').value=LS.get('gcc_secret','');if(!$('#key').value)$('#setup').open=true;else step(0,'Pick a video and press Analyze.');
+$('#save').onclick=()=>{LS.set('gcc_key',$('#key').value.trim());LS.set('gcc_model',$('#model').value.trim());LS.set('gcc_secret',$('#secret').value.trim());step(0,'Saved. Pick a video and press Analyze.','ok')};
+$('#forget').onclick=()=>{LS.del('gcc_key');$('#key').value='';step(0,'Key removed from this device.')};
+const secs=v=>{v=v.trim();if(!v)return null;const p=v.split(':').map(Number);if(p.some(isNaN))return null;return p.reduce((a,b)=>a*60+b,0)};
+const FOCUS={
+full:`Produce a complete editing breakdown:
+1. Overview: duration, aspect ratio, estimated resolution and frame rate, mood and genre.
+2. Shot-by-shot timeline. For every shot give: start–end time, what is on screen, camera movement (pan, tilt, zoom, dolly, 3D move; direction, speed, easing), the transition into the next shot, layers (foreground, middle, background, overlays, masks), effects (glow, blur, grain, speed ramps, shake, colour grade) and any on-screen text (exact words, font style, size, position, animation, timing).
+3. Audio: music tempo and beat or hit timestamps, voiceover transcript with timestamps, sound effects, and how the cuts sync to the audio.
+4. Recreation recipe: ordered steps with key parameters to rebuild this in After Effects or DaVinci Resolve.
+5. Uncertainties.`,
+camera:`Describe only camera movement and transitions: for every shot give the start–end time, the move type, direction, start and end scale, speed and easing, parallax between layers, and the transition into the next shot.`,
+text:`List every piece of on-screen text: exact words, start and end time, font style (serif, script, condensed, handwritten…), approximate size, colour, glow or outline, position, and how it animates in and out.`,
+audio:`Describe only the audio: music genre and tempo, beat and hit timestamps, voiceover transcript with timestamps, sound effects, and which visual cuts or motions land on which sounds.`,
+custom:`Follow the extra instructions below.`};
+function prompt(){const f=$('#focus').value,json=$('#fmt').value==='json';let p=`You are a video analyst. A video editor will rebuild this video from your notes. Watch every frame and listen to the audio. Use timestamps as MM:SS.s. If you are unsure, write "uncertain" instead of guessing.\n\n${FOCUS[f]}`;
+ if(json)p+=`\n\nReturn only valid JSON with the keys: overview, shots (each with start, end, description, camera, transition, layers, effects, text), audio, recipe, uncertainties.`;
+ const x=$('#extra').value.trim();if(x)p+=`\n\nExtra instructions: ${x}`;return p}
+async function upload(file,key,onp){
+ const s=await fetch(`${API}/upload/v1beta/files`,{method:'POST',headers:{'x-goog-api-key':key,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(file.size),'X-Goog-Upload-Header-Content-Type':file.type||'video/mp4','Content-Type':'application/json'},body:JSON.stringify({file:{display_name:file.name}})});
+ if(!s.ok)throw new Error('Google rejected the upload ('+s.status+'): '+(await s.text()).slice(0,200));
+ const url=s.headers.get('x-goog-upload-url');if(!url)throw new Error('NOURL');
+ return new Promise((ok,no)=>{const x=new XMLHttpRequest();x.open('POST',url);x.setRequestHeader('X-Goog-Upload-Offset','0');x.setRequestHeader('X-Goog-Upload-Command','upload, finalize');
+  x.upload.onprogress=e=>e.lengthComputable&&step(1,'Uploading… '+Math.round(e.loaded/e.total*100)+'%');
+  x.onload=()=>{try{const j=JSON.parse(x.responseText);x.status<300&&j.file?ok(j.file):no(new Error(x.responseText.slice(0,200)))}catch{no(new Error('Upload failed ('+x.status+')'))}};x.onerror=()=>no(new Error('NETWORK'));x.send(file)})}
+async function wait(f,key){let n=0;while(f.state==='PROCESSING'&&n++<100){step(1,'Google is processing the video…');await new Promise(r=>setTimeout(r,3000));const r=await fetch(`${API}/v1beta/${f.name}`,{headers:{'x-goog-api-key':key}});f=await r.json()}
+ if(f.state!=='ACTIVE')throw new Error('Video processing did not finish ('+(f.state||'unknown')+').');return f}
+const b64=file=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=()=>no(r.error);r.readAsDataURL(file)});
+$('#run').onclick=async()=>{const key=$('#key').value.trim(),model=$('#model').value.trim(),file=$('#file').files[0],yt=$('#yt').value.trim();
+ if(!key){$('#setup').open=true;return step(0,'Add your Gemini API key first.','err')}
+ if(!file&&!yt)return step(0,'Choose a video or paste a YouTube link.','err');
+ $('#run').disabled=true;$('#res').hidden=true;
+ try{let part,name=file?file.name:yt;
+  if(file){try{const f=await wait(await upload(file,key),key);part={fileData:{mimeType:f.mimeType,fileUri:f.uri}}}
+   catch(e){if(['NETWORK','NOURL'].includes(e.message)&&file.size<=14e6){step(1,'Direct upload blocked here, sending the clip inline…');part={inlineData:{mimeType:file.type||'video/mp4',data:await b64(file)}}}
+    else if(['NETWORK','NOURL'].includes(e.message))throw new Error('This browser blocked the large-file upload. Try a clip under 14 MB, trim it with the clip start and end, or use a YouTube link.');else throw e}}
+  else part={fileData:{fileUri:yt}};
+  const vm={fps:Number($('#fps').value)},a=secs($('#from').value),b=secs($('#to').value);if(a!==null)vm.startOffset=a+'s';if(b!==null)vm.endOffset=b+'s';part.videoMetadata=vm;
+  step(2,'Gemini is reading every frame and the audio…');
+  const body={contents:[{role:'user',parts:[part,{text:prompt()}]}],generationConfig:{temperature:.2,maxOutputTokens:30000}};if($('#fmt').value==='json')body.generationConfig.responseMimeType='application/json';
+  const r=await fetch(`${API}/v1beta/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();
+  if(d.error)throw new Error(d.error.message);const text=(d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+  if(!text)throw new Error(d.promptFeedback?.blockReason?'Gemini blocked this video: '+d.promptFeedback.blockReason:'Gemini returned no text. Try a shorter clip.');
+  const focus=$('#focus').selectedOptions[0].text,head=`# Video analysis by Gemini\nFile: ${name}\nModel: ${model} · ${vm.fps} fps · ${focus}\nDate: ${new Date().toLocaleString()}\n\n---\n\n`;
+  last={name,model,focus,text:head+text+`\n\n---\nNote for Claude: this is a Gemini breakdown. Timestamps can be off by about a second.`};
+  $('#out').textContent=last.text;$('#res').hidden=false;save();const sent=await send(last);step(3,sent?'Done. Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Done. Copy it and paste it to Claude.','ok');$('#res').scrollIntoView({behavior:'smooth'})
+ }catch(e){step(0,e.message==='Failed to fetch'?'Could not reach Google. Check your connection and API key.':e.message,'err')}finally{$('#run').disabled=false}};
+async function send(x){const s=$('#secret').value.trim();if(!s)return false;try{const r=await fetch('/inbox',{method:'POST',headers:{'x-inbox-secret':s,'content-type':'application/json'},body:JSON.stringify({name:x.name,model:x.model,focus:x.focus,text:x.text})});return r.ok}catch{return false}}
+$('#snd').onclick=async()=>{if(!last)return;const k=await send(last);step(3,k?'Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Could not send. Check the inbox secret in the settings.',k?'ok':'err')};
+function save(){const h=LS.get('gcc_hist',[]);h.unshift({t:Date.now(),...last});LS.set('gcc_hist',h.slice(0,8));draw()}
+function draw(){const h=LS.get('gcc_hist',[]);if(!h.length)return;$('#hist').innerHTML='';h.forEach(x=>{const b=document.createElement('button');b.textContent=new Date(x.t).toLocaleDateString()+' · '+x.name.slice(0,40)+' · '+x.focus;b.onclick=()=>{last=x;$('#out').textContent=x.text;$('#res').hidden=false;$('#res').scrollIntoView()};$('#hist').appendChild(b)})}draw();
+$('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(last.text)}catch{const r=document.createRange();r.selectNodeContents($('#out'));const s=getSelection();s.removeAllRanges();s.addRange(r);document.execCommand('copy')}step(3,'Copied. Paste it into your chat with Claude.','ok')};
+$('#share').onclick=()=>navigator.share?navigator.share({title:'Video analysis',text:last.text}).catch(()=>{}):$('#copy').click();
+$('#dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([last.text],{type:'text/markdown'}));a.download='video-analysis.md';a.click()};
+</script></body></html>
