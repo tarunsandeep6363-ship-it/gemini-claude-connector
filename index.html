@@ -48,10 +48,10 @@ button.go:disabled{opacity:.55}.tools{display:flex;gap:8px;flex-wrap:wrap;margin
 <section><label for="focus" style="margin-top:0">What should Gemini extract?</label>
 <select id="focus"><option value="both" selected>Picture + audio, in parallel (recommended)</option><option value="full">Full editing breakdown</option><option value="camera">Camera and motion only</option><option value="text">On-screen text and fonts</option><option value="audio">Audio, music and beat sync</option><option value="custom">Only my instructions</option></select>
 <div class="row"><div><label for="fps">Frames per second</label><select id="fps"><option>1</option><option selected>2</option><option>4</option><option>8</option></select></div><div><label for="fmt">Format</label><select id="fmt"><option value="md">Markdown</option><option value="json">JSON</option></select></div></div>
-<label for="extra">Extra instructions</label><textarea id="extra" placeholder="e.g. Focus on the transition at 0:04 and the handwriting animation."></textarea>
+<label for="extra">Extra instructions</label><textarea id="extra" placeholder="e.g. Focus on the transition at 0:04 and the handwriting animation."></textarea><p class="hint">To save this as a learning note instead of a normal analysis, add <b>#playbook</b> or <b>#playbook:name</b> (for example #playbook:whip-transitions).</p>
 <button class="go" id="run">Analyze video</button></section>
 
-<section id="res" hidden><div class="tools"><button id="snd">Send to Claude inbox</button><button id="copy">Copy for Claude</button><button id="share">Share</button><button id="dl">Save file</button></div><pre id="out"></pre>
+<section id="res" hidden><div class="tools"><button id="snd">Send to Claude inbox</button><button id="sndp">Save to playbook</button><button id="copy">Copy for Claude</button><button id="share">Share</button><button id="dl">Save file</button></div><pre id="out"></pre>
 <p class="hint">Paste the copied text into your chat with Claude, along with the video if you like.</p></section>
 <details class="hist"><summary>Earlier analyses</summary><div id="hist"><p class="hint">Nothing saved yet.</p></div></details>
 </main>
@@ -80,10 +80,22 @@ audio:`Listen to the audio track only and produce:
 4. Structure: sections of the audio with start–end times (intro, build, drop, calm part, final push) and how loud each feels.
 5. If the picture is visible, which cuts or on-screen changes land on which sounds.
 6. Uncertainties.`,
+learn:`This video is being studied so an editor can reuse its techniques. Break it into separate reusable techniques (for example a text reveal, a transition, a camera move, a colour grade, a sound-synced cut). For each technique give:
+- Name and the exact time range (MM:SS.s).
+- When to use it.
+- Ingredients: layers, assets, fonts, effects.
+- Step-by-step recipe in After Effects terms, and what to do in a simple canvas editor.
+- Parameters with numbers: duration in frames at the video's frame rate, easing type, scale or position start and end values, blur or glow amounts, opacity, colours as hex.
+- Timing relationship to the audio, if any.
+- Common mistakes.
+Mark any number you are estimating as "estimated". Do not invent values.`,
+learnaudio:`Describe how the sound supports the editing techniques: which sounds trigger visual changes, the gap in frames or milliseconds between each sound and its visual event, risers and drops with start and end times, and which sounds are essential to the effect. Also give a transcript of speech with timestamps. Mark estimates as "estimated".`,
 custom:`Follow the extra instructions below.`};
+const TAG=/#(?:playbook|learn)(?::([\w-]{1,60}))?/i,extraText=()=>$('#extra').value.replace(TAG,'').trim(),slug=t=>(t||'').toLowerCase().replace(/\.[^.]+$/,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60)||'untitled';
+function learnTag(){const m=$('#extra').value.match(TAG);if(!m)return null;return m[1]?slug(m[1]):slug($('#file').files[0]?.name||'video')}
 function prompt(f){f=f||$('#focus').value;const json=$('#fmt').value==='json';let p=`You are a video analyst. A video editor will rebuild this video from your notes. Watch every frame and listen to the audio. Use timestamps as MM:SS.s. If you are unsure, write "uncertain" instead of guessing.\n\n${FOCUS[f]}`;
- if(json)p+=f==='audio'?`\n\nReturn only valid JSON with the keys: transcript (list of {start, end, speaker, text, tone}), music, sound_events (list of {time, what}), structure, sync_notes, uncertainties.`:`\n\nReturn only valid JSON with the keys: overview, shots (each with start, end, description, camera, transition, layers, effects, text), recipe, uncertainties.`;
- const x=$('#extra').value.trim();if(x)p+=`\n\nExtra instructions: ${x}`;return p}
+ if(json)p+=f==='learn'?`\n\nReturn only valid JSON with the keys: summary, techniques (list of {name, time_range, when_to_use, ingredients, steps, parameters, audio_timing, mistakes}), uncertainties.`:f==='learnaudio'?`\n\nReturn only valid JSON with the keys: transcript, sound_roles, timings, essential_sounds, uncertainties.`:f==='audio'?`\n\nReturn only valid JSON with the keys: transcript (list of {start, end, speaker, text, tone}), music, sound_events (list of {time, what}), structure, sync_notes, uncertainties.`:`\n\nReturn only valid JSON with the keys: overview, shots (each with start, end, description, camera, transition, layers, effects, text), recipe, uncertainties.`;
+ const x=extraText();if(x)p+=`\n\nExtra instructions: ${x}`;return p}
 async function upload(file,key,onp){
  const s=await fetch(`${API}/upload/v1beta/files`,{method:'POST',headers:{'x-goog-api-key':key,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(file.size),'X-Goog-Upload-Header-Content-Type':file.type||'video/mp4','Content-Type':'application/json'},body:JSON.stringify({file:{display_name:file.name}})});
  if(!s.ok)throw new Error('Google rejected the upload ('+s.status+'): '+(await s.text()).slice(0,200));
@@ -106,7 +118,7 @@ async function gen(fk,part,key,model,fps,upd){let err;
    return{text,model:md}}
   catch(e){err=e;throw e}}
  throw err}
-$('#run').onclick=async()=>{const key=$('#key').value.trim(),model=$('#model').value.trim(),file=$('#file').files[0],yt=$('#yt').value.trim(),F=$('#focus').value;
+$('#run').onclick=async()=>{const key=$('#key').value.trim(),model=$('#model').value.trim(),file=$('#file').files[0],yt=$('#yt').value.trim(),F=$('#focus').value,LP=learnTag(),L=!!LP;
  if(!key){$('#setup').open=true;return step(0,'Add your Gemini API key first.','err')}
  if(!file&&!yt)return step(0,'Choose a video or paste a YouTube link.','err');
  $('#run').disabled=true;$('#res').hidden=true;$('#tracks').textContent='';
@@ -119,20 +131,21 @@ $('#run').onclick=async()=>{const key=$('#key').value.trim(),model=$('#model').v
   step(2,F==='both'?'Gemini is reading the picture and listening to the audio at the same time…':'Gemini is reading the video…');
   const tr={},show=()=>{$('#tracks').textContent=Object.entries(tr).map(([k,v])=>(k==='picture'?'Picture: ':'Audio: ')+v).join('   ·   ')};
   const job=(k,fk)=>gen(fk,part,key,model,vm.fps,m=>{tr[k]=m;show()}).then(r=>{tr[k]='done ('+r.model+')';show();return r},e=>{tr[k]='failed';show();throw e});
-  const jobs=F==='both'?{picture:job('picture','full'),audio:job('audio','audio')}:F==='audio'?{audio:job('audio','audio')}:{picture:job('picture',F)};
+  const A=L?'learnaudio':'audio',jobs=F==='both'?{picture:job('picture',L?'learn':'full'),audio:job('audio',A)}:F==='audio'?{audio:job('audio',A)}:{picture:job('picture',L&&F!=='custom'?'learn':F)};
   const ks=Object.keys(jobs),res=await Promise.allSettled(ks.map(k=>jobs[k])),got={},fails=[];
   res.forEach((r,i)=>r.status==='fulfilled'?got[ks[i]]=r.value:fails.push(ks[i]+': '+r.reason.message));
   if(!Object.keys(got).length)throw new Error(fails.join(' | '));
   const gk=Object.keys(got),used=[...new Set(gk.map(k=>got[k].model))].join(', ');let body;
   if($('#fmt').value==='json')body='{'+gk.map(k=>`"${k}":${got[k].text}`).join(',')+'}';
-  else{const ps=[];if(got.picture)ps.push('## PART 1: WHAT IS SEEN (picture)\n\n'+got.picture.text);if(got.audio)ps.push('## PART '+(got.picture?2:1)+': WHAT IS HEARD (audio and transcript)\n\n'+got.audio.text);body=ps.join('\n\n---\n\n')}
-  const focus=$('#focus').selectedOptions[0].text,head=`# Video analysis by Gemini\nFile: ${name}\nModel: ${used} · ${vm.fps} fps (picture) · ${focus}\nDate: ${new Date().toLocaleString()}\n`+(fails.length?`Incomplete: ${fails.join(' | ')}\n`:'')+`\n---\n\n`;
-  last={name,model:used,focus,text:head+body+`\n\n---\nNote for Claude: this is a Gemini breakdown. Part 1 is what is seen, Part 2 is what is heard. Timestamps can be off by about a second.`};
+  else{const ps=[];if(got.picture)ps.push((L?'## PART 1: TECHNIQUES SEEN (picture)':'## PART 1: WHAT IS SEEN (picture)')+'\n\n'+got.picture.text);if(got.audio)ps.push('## PART '+(got.picture?2:1)+(L?': SOUND DESIGN AND TRANSCRIPT':': WHAT IS HEARD (audio and transcript)')+'\n\n'+got.audio.text);body=ps.join('\n\n---\n\n')}
+  const focus=L?'Playbook learning':$('#focus').selectedOptions[0].text,head=`${L?'# Playbook entry (draft by Gemini, not yet verified)':'# Video analysis by Gemini'}\nFile: ${name}\nModel: ${used} · ${vm.fps} fps (picture) · ${focus}\nDate: ${new Date().toLocaleString()}\n`+(fails.length?`Incomplete: ${fails.join(' | ')}\n`:'')+`\n---\n\n`;
+  last={name,model:used,focus,pname:LP||undefined,text:head+body+`\n\n---\nNote for Claude: this is a Gemini breakdown. Part 1 is what is seen, Part 2 is what is heard. Timestamps can be off by about a second.`};
   $('#out').textContent=last.text;$('#res').hidden=false;
-  save();const sent=await send(last);step(3,(fails.length?'Partly done ('+fails.length+' pass failed). ':'Done. ')+(sent?'Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Copy it and paste it to Claude.'),fails.length?'':'ok');$('#res').scrollIntoView({behavior:'smooth'})
+  save();const sent=await send(last,L);step(3,(fails.length?'Partly done ('+fails.length+' pass failed). ':'Done. ')+(sent?(L?'Saved to the playbook as “'+LP+'”. Tell Claude: read playbook '+LP+'.':'Sent to the Claude inbox. Tell Claude: get my latest analysis.'):'Copy it and paste it to Claude.'),fails.length?'':'ok');$('#res').scrollIntoView({behavior:'smooth'})
  }catch(e){step(0,e.message==='Failed to fetch'?'Could not reach Google. Check your connection and API key.':e.message,'err')}finally{$('#run').disabled=false}};
-async function send(x){const s=$('#secret').value.trim();if(!s)return false;try{const r=await fetch('/inbox',{method:'POST',headers:{'x-inbox-secret':s,'content-type':'application/json'},body:JSON.stringify({name:x.name,model:x.model,focus:x.focus,text:x.text})});return r.ok}catch{return false}}
+async function send(x,pb){const s=$('#secret').value.trim();if(!s)return false;try{const r=await fetch(pb?'/playbook':'/inbox',{method:'POST',headers:{'x-inbox-secret':s,'content-type':'application/json'},body:JSON.stringify(pb?{name:x.pname||slug(x.name),text:x.text,source:'page: '+x.name}:{name:x.name,model:x.model,focus:x.focus,text:x.text})});return r.ok}catch{return false}}
 $('#snd').onclick=async()=>{if(!last)return;const k=await send(last);step(3,k?'Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Could not send. Check the inbox secret in the settings.',k?'ok':'err')};
+$('#sndp').onclick=async()=>{if(!last)return;const nm=learnTag()||last.pname||slug(last.name);last.pname=nm;const k=await send(last,true);step(3,k?'Saved to the playbook as “'+nm+'”. Tell Claude: read playbook '+nm+'.':'Could not save. Check the inbox secret in the settings.',k?'ok':'err')};
 function save(){const h=LS.get('gcc_hist',[]);h.unshift({t:Date.now(),...last});LS.set('gcc_hist',h.slice(0,8));draw()}
 function draw(){const h=LS.get('gcc_hist',[]);if(!h.length)return;$('#hist').innerHTML='';h.forEach(x=>{const b=document.createElement('button');b.textContent=new Date(x.t).toLocaleDateString()+' · '+x.name.slice(0,40)+' · '+x.focus;b.onclick=()=>{last=x;$('#out').textContent=x.text;$('#res').hidden=false;$('#res').scrollIntoView()};$('#hist').appendChild(b)})}draw();
 $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(last.text)}catch{const r=document.createRange();r.selectNodeContents($('#out'));const s=getSelection();s.removeAllRanges();s.addRange(r);document.execCommand('copy')}step(3,'Copied. Paste it into your chat with Claude.','ok')};
