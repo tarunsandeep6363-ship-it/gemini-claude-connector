@@ -32,7 +32,7 @@ button.go:disabled{opacity:.55}.tools{display:flex;gap:8px;flex-wrap:wrap;margin
 <h1>Gemini – Claude Connector</h1>
 <p class="sub">Gemini watches and listens to your video. You pass the breakdown to Claude.</p>
 <div class="bridge" id="bridge"><div class="stop on"><i></i>Video</div><div class="stop"><i></i>Upload</div><div class="stop"><i></i>Gemini reads</div><div class="stop"><i></i>Ready for Claude</div></div>
-<div id="status" role="status">Add your Gemini API key to start.</div>
+<div id="status" role="status">Add your Gemini API key to start.</div><div id="tracks" class="hint" aria-live="polite"></div>
 
 <details id="setup"><summary>API key and model</summary>
 <label for="key">Gemini API key (stays on this device only)</label><input id="key" type="password" autocomplete="off" placeholder="Paste key from Google AI Studio">
@@ -46,7 +46,7 @@ button.go:disabled{opacity:.55}.tools{display:flex;gap:8px;flex-wrap:wrap;margin
 <div class="row"><div><label for="from">Clip start (optional)</label><input id="from" placeholder="0:00"></div><div><label for="to">Clip end (optional)</label><input id="to" placeholder="0:30"></div></div></section>
 
 <section><label for="focus" style="margin-top:0">What should Gemini extract?</label>
-<select id="focus"><option value="full">Full editing breakdown</option><option value="camera">Camera and motion only</option><option value="text">On-screen text and fonts</option><option value="audio">Audio, music and beat sync</option><option value="custom">Only my instructions</option></select>
+<select id="focus"><option value="both" selected>Picture + audio, in parallel (recommended)</option><option value="full">Full editing breakdown</option><option value="camera">Camera and motion only</option><option value="text">On-screen text and fonts</option><option value="audio">Audio, music and beat sync</option><option value="custom">Only my instructions</option></select>
 <div class="row"><div><label for="fps">Frames per second</label><select id="fps"><option>1</option><option selected>2</option><option>4</option><option>8</option></select></div><div><label for="fmt">Format</label><select id="fmt"><option value="md">Markdown</option><option value="json">JSON</option></select></div></div>
 <label for="extra">Extra instructions</label><textarea id="extra" placeholder="e.g. Focus on the transition at 0:04 and the handwriting animation."></textarea>
 <button class="go" id="run">Analyze video</button></section>
@@ -73,10 +73,16 @@ full:`Produce a complete editing breakdown:
 5. Uncertainties.`,
 camera:`Describe only camera movement and transitions: for every shot give the start–end time, the move type, direction, start and end scale, speed and easing, parallax between layers, and the transition into the next shot.`,
 text:`List every piece of on-screen text: exact words, start and end time, font style (serif, script, condensed, handwritten…), approximate size, colour, glow or outline, position, and how it animates in and out.`,
-audio:`Describe only the audio: music genre and tempo, beat and hit timestamps, voiceover transcript with timestamps, sound effects, and which visual cuts or motions land on which sounds.`,
+audio:`Listen to the audio track only and produce:
+1. Transcript of all speech with timestamps (MM:SS.s), the speaker (Voice 1, Voice 2…), tone, and the language. Write [unclear] where you cannot hear a word. Do not invent words.
+2. Music: genre, mood, estimated tempo (BPM) and your confidence, key if you can tell, instruments and samples.
+3. Sound events with timestamps: risers, drops, bass or 808 hits, snares, whooshes, impacts, camera shutters, vinyl crackle, ambience.
+4. Structure: sections of the audio with start–end times (intro, build, drop, calm part, final push) and how loud each feels.
+5. If the picture is visible, which cuts or on-screen changes land on which sounds.
+6. Uncertainties.`,
 custom:`Follow the extra instructions below.`};
-function prompt(){const f=$('#focus').value,json=$('#fmt').value==='json';let p=`You are a video analyst. A video editor will rebuild this video from your notes. Watch every frame and listen to the audio. Use timestamps as MM:SS.s. If you are unsure, write "uncertain" instead of guessing.\n\n${FOCUS[f]}`;
- if(json)p+=`\n\nReturn only valid JSON with the keys: overview, shots (each with start, end, description, camera, transition, layers, effects, text), audio, recipe, uncertainties.`;
+function prompt(f){f=f||$('#focus').value;const json=$('#fmt').value==='json';let p=`You are a video analyst. A video editor will rebuild this video from your notes. Watch every frame and listen to the audio. Use timestamps as MM:SS.s. If you are unsure, write "uncertain" instead of guessing.\n\n${FOCUS[f]}`;
+ if(json)p+=f==='audio'?`\n\nReturn only valid JSON with the keys: transcript (list of {start, end, speaker, text, tone}), music, sound_events (list of {time, what}), structure, sync_notes, uncertainties.`:`\n\nReturn only valid JSON with the keys: overview, shots (each with start, end, description, camera, transition, layers, effects, text), recipe, uncertainties.`;
  const x=$('#extra').value.trim();if(x)p+=`\n\nExtra instructions: ${x}`;return p}
 async function upload(file,key,onp){
  const s=await fetch(`${API}/upload/v1beta/files`,{method:'POST',headers:{'x-goog-api-key':key,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(file.size),'X-Goog-Upload-Header-Content-Type':file.type||'video/mp4','Content-Type':'application/json'},body:JSON.stringify({file:{display_name:file.name}})});
@@ -88,24 +94,42 @@ async function upload(file,key,onp){
 async function wait(f,key){let n=0;while(f.state==='PROCESSING'&&n++<100){step(1,'Google is processing the video…');await new Promise(r=>setTimeout(r,3000));const r=await fetch(`${API}/v1beta/${f.name}`,{headers:{'x-goog-api-key':key}});f=await r.json()}
  if(f.state!=='ACTIVE')throw new Error('Video processing did not finish ('+(f.state||'unknown')+').');return f}
 const b64=file=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=()=>no(r.error);r.readAsDataURL(file)});
-$('#run').onclick=async()=>{const key=$('#key').value.trim(),model=$('#model').value.trim(),file=$('#file').files[0],yt=$('#yt').value.trim();
+const FB=['gemini-3.7-flash','gemini-2.5-pro'],pause=ms=>new Promise(r=>setTimeout(r,ms)),busy=(c,m)=>c===429||c===500||c===503||/high demand|overload|unavailable|try again/i.test(m||'');
+async function gen(fk,part,key,model,fps,upd){let err;
+ for(const md of [model,...FB.filter(x=>x!==model)])for(let t=0;t<2;t++){
+  try{upd(md+(t?' (retry)':'')+'…');const p=JSON.parse(JSON.stringify(part));p.videoMetadata={...(p.videoMetadata||{}),fps:fk==='audio'?1:fps};
+   const body={contents:[{role:'user',parts:[p,{text:prompt(fk)}]}],generationConfig:{temperature:.2,maxOutputTokens:30000}};if($('#fmt').value==='json')body.generationConfig.responseMimeType='application/json';
+   const r=await fetch(`${API}/v1beta/models/${encodeURIComponent(md)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json().catch(()=>({}));
+   if(d.error){err=new Error(d.error.message);if(busy(r.status,d.error.message)){await pause(t?0:4000);continue}throw err}
+   const text=(d.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
+   if(!text)throw new Error(d.promptFeedback?.blockReason?'Blocked: '+d.promptFeedback.blockReason:'No text returned');
+   return{text,model:md}}
+  catch(e){err=e;throw e}}
+ throw err}
+$('#run').onclick=async()=>{const key=$('#key').value.trim(),model=$('#model').value.trim(),file=$('#file').files[0],yt=$('#yt').value.trim(),F=$('#focus').value;
  if(!key){$('#setup').open=true;return step(0,'Add your Gemini API key first.','err')}
  if(!file&&!yt)return step(0,'Choose a video or paste a YouTube link.','err');
- $('#run').disabled=true;$('#res').hidden=true;
+ $('#run').disabled=true;$('#res').hidden=true;$('#tracks').textContent='';
  try{let part,name=file?file.name:yt;
   if(file){try{const f=await wait(await upload(file,key),key);part={fileData:{mimeType:f.mimeType,fileUri:f.uri}}}
    catch(e){if(['NETWORK','NOURL'].includes(e.message)&&file.size<=14e6){step(1,'Direct upload blocked here, sending the clip inline…');part={inlineData:{mimeType:file.type||'video/mp4',data:await b64(file)}}}
     else if(['NETWORK','NOURL'].includes(e.message))throw new Error('This browser blocked the large-file upload. Try a clip under 14 MB, trim it with the clip start and end, or use a YouTube link.');else throw e}}
   else part={fileData:{fileUri:yt}};
   const vm={fps:Number($('#fps').value)},a=secs($('#from').value),b=secs($('#to').value);if(a!==null)vm.startOffset=a+'s';if(b!==null)vm.endOffset=b+'s';part.videoMetadata=vm;
-  step(2,'Gemini is reading every frame and the audio…');
-  const body={contents:[{role:'user',parts:[part,{text:prompt()}]}],generationConfig:{temperature:.2,maxOutputTokens:30000}};if($('#fmt').value==='json')body.generationConfig.responseMimeType='application/json';
-  const r=await fetch(`${API}/v1beta/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json();
-  if(d.error)throw new Error(d.error.message);const text=(d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
-  if(!text)throw new Error(d.promptFeedback?.blockReason?'Gemini blocked this video: '+d.promptFeedback.blockReason:'Gemini returned no text. Try a shorter clip.');
-  const focus=$('#focus').selectedOptions[0].text,head=`# Video analysis by Gemini\nFile: ${name}\nModel: ${model} · ${vm.fps} fps · ${focus}\nDate: ${new Date().toLocaleString()}\n\n---\n\n`;
-  last={name,model,focus,text:head+text+`\n\n---\nNote for Claude: this is a Gemini breakdown. Timestamps can be off by about a second.`};
-  $('#out').textContent=last.text;$('#res').hidden=false;save();const sent=await send(last);step(3,sent?'Done. Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Done. Copy it and paste it to Claude.','ok');$('#res').scrollIntoView({behavior:'smooth'})
+  step(2,F==='both'?'Gemini is reading the picture and listening to the audio at the same time…':'Gemini is reading the video…');
+  const tr={},show=()=>{$('#tracks').textContent=Object.entries(tr).map(([k,v])=>(k==='picture'?'Picture: ':'Audio: ')+v).join('   ·   ')};
+  const job=(k,fk)=>gen(fk,part,key,model,vm.fps,m=>{tr[k]=m;show()}).then(r=>{tr[k]='done ('+r.model+')';show();return r},e=>{tr[k]='failed';show();throw e});
+  const jobs=F==='both'?{picture:job('picture','full'),audio:job('audio','audio')}:F==='audio'?{audio:job('audio','audio')}:{picture:job('picture',F)};
+  const ks=Object.keys(jobs),res=await Promise.allSettled(ks.map(k=>jobs[k])),got={},fails=[];
+  res.forEach((r,i)=>r.status==='fulfilled'?got[ks[i]]=r.value:fails.push(ks[i]+': '+r.reason.message));
+  if(!Object.keys(got).length)throw new Error(fails.join(' | '));
+  const gk=Object.keys(got),used=[...new Set(gk.map(k=>got[k].model))].join(', ');let body;
+  if($('#fmt').value==='json')body='{'+gk.map(k=>`"${k}":${got[k].text}`).join(',')+'}';
+  else{const ps=[];if(got.picture)ps.push('## PART 1: WHAT IS SEEN (picture)\n\n'+got.picture.text);if(got.audio)ps.push('## PART '+(got.picture?2:1)+': WHAT IS HEARD (audio and transcript)\n\n'+got.audio.text);body=ps.join('\n\n---\n\n')}
+  const focus=$('#focus').selectedOptions[0].text,head=`# Video analysis by Gemini\nFile: ${name}\nModel: ${used} · ${vm.fps} fps (picture) · ${focus}\nDate: ${new Date().toLocaleString()}\n`+(fails.length?`Incomplete: ${fails.join(' | ')}\n`:'')+`\n---\n\n`;
+  last={name,model:used,focus,text:head+body+`\n\n---\nNote for Claude: this is a Gemini breakdown. Part 1 is what is seen, Part 2 is what is heard. Timestamps can be off by about a second.`};
+  $('#out').textContent=last.text;$('#res').hidden=false;
+  save();const sent=await send(last);step(3,(fails.length?'Partly done ('+fails.length+' pass failed). ':'Done. ')+(sent?'Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Copy it and paste it to Claude.'),fails.length?'':'ok');$('#res').scrollIntoView({behavior:'smooth'})
  }catch(e){step(0,e.message==='Failed to fetch'?'Could not reach Google. Check your connection and API key.':e.message,'err')}finally{$('#run').disabled=false}};
 async function send(x){const s=$('#secret').value.trim();if(!s)return false;try{const r=await fetch('/inbox',{method:'POST',headers:{'x-inbox-secret':s,'content-type':'application/json'},body:JSON.stringify({name:x.name,model:x.model,focus:x.focus,text:x.text})});return r.ok}catch{return false}}
 $('#snd').onclick=async()=>{if(!last)return;const k=await send(last);step(3,k?'Sent to the Claude inbox. Tell Claude: get my latest analysis.':'Could not send. Check the inbox secret in the settings.',k?'ok':'err')};
