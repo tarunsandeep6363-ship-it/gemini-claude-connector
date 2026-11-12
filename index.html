@@ -106,7 +106,7 @@ async function upload(file,key,onp){
 async function wait(f,key){let n=0;while(f.state==='PROCESSING'&&n++<100){step(1,'Google is processing the video…');await new Promise(r=>setTimeout(r,3000));const r=await fetch(`${API}/v1beta/${f.name}`,{headers:{'x-goog-api-key':key}});f=await r.json()}
  if(f.state!=='ACTIVE')throw new Error('Video processing did not finish ('+(f.state||'unknown')+').');return f}
 const b64=file=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=()=>no(r.error);r.readAsDataURL(file)});
-const FB=['gemini-3.7-flash','gemini-2.5-pro'],pause=ms=>new Promise(r=>setTimeout(r,ms)),busy=(c,m)=>c===429||c===500||c===503||/high demand|overload|unavailable|try again/i.test(m||'');
+const FB=['gemini-3.6-flash','gemini-3.1-pro-preview'],pause=ms=>new Promise(r=>setTimeout(r,ms)),busy=(c,m)=>c===429||c===500||c===503||/high demand|overload|unavailable|try again|no longer available|not found|deprecated/i.test(m||'');
 async function gen(fk,part,key,model,fps,upd){let err;
  for(const md of [model,...FB.filter(x=>x!==model)])for(let t=0;t<2;t++){
   try{upd(md+(t?' (retry)':'')+'…');const p=JSON.parse(JSON.stringify(part));p.videoMetadata={...(p.videoMetadata||{}),fps:fk==='audio'?1:fps};

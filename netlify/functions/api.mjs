@@ -26,7 +26,7 @@ const TOOLS = [
 const slug = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 async function addNote(name, text, source, status, mode) {
   const id = slug(name);
-  if (!id) throw new Error("A name is required."); to
+  if (!id) throw new Error("A name is required.");
   const st = getStore("playbook");
   const old = (await st.get(id, { type: "json" })) || { name: id, entries: [] };
   const entry = { t: Date.now(), source: String(source || "").slice(0, 120), status: ["draft", "verified", "user"].includes(status) ? status : "draft", text: String(text).slice(0, 300000) };
